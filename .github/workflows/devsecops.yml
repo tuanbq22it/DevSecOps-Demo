@@ -14,28 +14,28 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 2. 🔴 Rà quét Bí mật bị lộ (Secret Scanning)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@master # <--- ĐÃ SỬA THÀNH @master
         with:
           scan-type: "fs"
           scan-ref: "."
           format: "table"
-          exit-code: "1" # Báo đỏ nếu lộ mật khẩu
+          exit-code: "1"
           scanners: "secret"
           severity: "CRITICAL,HIGH"
 
       - name: 3. 🐳 Quét Lỗ hổng Docker Image (Trivy)
         if: success()
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@master # <--- ĐÃ SỬA THÀNH @master
         with:
           image-ref: "bkimminich/juice-shop:latest"
           format: "json"
           output: "trivy-report.json"
           vuln-type: "os,library"
           severity: "CRITICAL,HIGH"
-          exit-code: "1" # Đổi thành 1 để chặn deploy nếu image có lỗi
+          exit-code: "1"
 
       - name: 4. 🚀 Khởi động Ứng dụng Mục tiêu
-        if: always() # Vẫn chạy ứng dụng để test ZAP dù Trivy có bắt được lỗi
+        if: always()
         run: |
           docker run --rm -d -p 3000:3000 --name juice-shop bkimminich/juice-shop:latest
           echo "Waiting for app to start..."
@@ -44,17 +44,14 @@ jobs:
       - name: 5. ⚡ Quét Giao diện & API (OWASP ZAP)
         if: always()
         run: |
-          # Cấp quyền ghi file cho thư mục hiện tại
           chmod 777 $(pwd)
-          # Chạy ZAP, xuất cả file HTML (để người đọc) và XML (để máy đọc)
           docker run --network host -v $(pwd):/zap/wrk/:rw -t zaproxy/zap-stable zap-baseline.py \
           -t http://localhost:3000 \
           -r zap-report.html \
           -x zap-report.xml
-          # Cố tình không dùng cờ -I để ZAP sẽ báo fail (đỏ) khi bắt được lỗi
 
       - name: 6. 📁 Lưu trữ File Báo cáo (Artifacts)
-        if: always() # Luôn lấy báo cáo dù pipeline thành công hay thất bại
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: DevSecOps-Reports
@@ -64,7 +61,7 @@ jobs:
             zap-report.xml
 
       - name: 7. 🚨 GỬI EMAIL BÁO ĐỘNG
-        if: failure() # Chỉ gửi khi các bước trên bị lỗi đỏ
+        if: failure()
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
