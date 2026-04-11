@@ -1,0 +1,56 @@
+name: DevSecOps Auto Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: 
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. Tải ứng dụng mục tiêu (Juice Shop)
+        run: docker pull bkimminich/juice-shop
+
+      - name: 2. [SAST] Quét lỗ hổng tĩnh bằng Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'bkimminich/juice-shop'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+      - name: 3. Khởi chạy ứng dụng web
+        if: always()
+        run: |
+          docker run --rm -d -p 3000:3000 bkimminich/juice-shop
+          sleep 15
+
+      - name: 4. [DAST] Quét lỗ hổng động bằng OWASP ZAP
+        if: always()
+        uses: zaproxy/action-baseline@v0.10.0
+        with:
+          target: 'http://localhost:3000'
+          fail_action: true
+
+      - name: 5. 🚨 GỬI EMAIL BÁO ĐỘNG
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "🚨 [CẢNH BÁO DEVSECOPS] Phát hiện lỗ hổng bảo mật!"
+          to: ${{ secrets.MAIL_TO }}
+          from: "Hệ thống CI/CD Security Bot"
+          body: |
+            Xin chào Đội ngũ Phát triển,
+            
+            Hệ thống CI/CD vừa tự động chạy quy trình kiểm duyệt (Trivy & OWASP ZAP) và đã PHÁT HIỆN LỖ HỔNG.
+            
+            - Trạng thái: QUY TRÌNH DEPLOY ĐÃ BỊ CHẶN LẠI.
+            - Hành động: Vui lòng đăng nhập vào GitHub, mở tab "Actions" để xem chi tiết.
+            
+            Trân trọng.
