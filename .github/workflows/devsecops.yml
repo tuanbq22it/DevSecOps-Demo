@@ -26,6 +26,10 @@ jobs:
           docker run --rm -d -p 3000:3000 bkimminich/juice-shop
           sleep 15
 
+      - name: 3.5 Sửa lỗi phân quyền cho Docker ZAP
+        if: always()
+        run: chmod -R 777 ${{ github.workspace }}
+      
       - name: 4. [DAST] Quét lỗ hổng động bằng OWASP ZAP
         if: always()
         uses: zaproxy/action-baseline@v0.10.0
