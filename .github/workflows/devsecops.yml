@@ -1,44 +1,70 @@
-name: DevSecOps Auto Pipeline
+name: Advanced DevSecOps Pipeline
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch: 
+    branches: ["main"]
+  workflow_dispatch:
 
 jobs:
-  security-scan:
+  security-guard:
     runs-on: ubuntu-latest
+
     steps:
-      - name: 1. Tải ứng dụng mục tiêu (Juice Shop)
-        run: docker pull bkimminich/juice-shop
+      - name: 1. Checkout code
+        uses: actions/checkout@v4
 
-      - name: 2. [SAST] Quét lỗ hổng tĩnh bằng Trivy
-        uses: aquasecurity/trivy-action@master
+      - name: 2. 🔴 Rà quét Bí mật bị lộ (Secret Scanning)
+        uses: aquasecurity/trivy-action@0.24.0
         with:
-          image-ref: 'bkimminich/juice-shop'
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
+          scan-type: "fs"
+          scan-ref: "."
+          format: "table"
+          exit-code: "1" # Báo đỏ nếu lộ mật khẩu
+          scanners: "secret"
+          severity: "CRITICAL,HIGH"
 
-      - name: 3. Khởi chạy ứng dụng web
+      - name: 3. 🐳 Quét Lỗ hổng Docker Image (Trivy)
+        if: success()
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: "bkimminich/juice-shop:latest"
+          format: "json"
+          output: "trivy-report.json"
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1" # Đổi thành 1 để chặn deploy nếu image có lỗi
+
+      - name: 4. 🚀 Khởi động Ứng dụng Mục tiêu
+        if: always() # Vẫn chạy ứng dụng để test ZAP dù Trivy có bắt được lỗi
+        run: |
+          docker run --rm -d -p 3000:3000 --name juice-shop bkimminich/juice-shop:latest
+          echo "Waiting for app to start..."
+          sleep 30
+
+      - name: 5. ⚡ Quét Giao diện & API (OWASP ZAP)
         if: always()
         run: |
-          docker run --rm -d -p 3000:3000 bkimminich/juice-shop
-          sleep 15
+          # Cấp quyền ghi file cho thư mục hiện tại
+          chmod 777 $(pwd)
+          # Chạy ZAP, xuất cả file HTML (để người đọc) và XML (để máy đọc)
+          docker run --network host -v $(pwd):/zap/wrk/:rw -t zaproxy/zap-stable zap-baseline.py \
+          -t http://localhost:3000 \
+          -r zap-report.html \
+          -x zap-report.xml
+          # Cố tình không dùng cờ -I để ZAP sẽ báo fail (đỏ) khi bắt được lỗi
 
-      - name: 3.5 Sửa lỗi phân quyền cho Docker ZAP
-        if: always()
-        run: chmod -R 777 ${{ github.workspace }}
-      
-      - name: 4. [DAST] Quét lỗ hổng động bằng OWASP ZAP
-        if: always()
-        uses: zaproxy/action-baseline@v0.10.0
+      - name: 6. 📁 Lưu trữ File Báo cáo (Artifacts)
+        if: always() # Luôn lấy báo cáo dù pipeline thành công hay thất bại
+        uses: actions/upload-artifact@v4
         with:
-          target: 'http://localhost:3000'
-          fail_action: true
+          name: DevSecOps-Reports
+          path: |
+            trivy-report.json
+            zap-report.html
+            zap-report.xml
 
-      - name: 5. 🚨 GỬI EMAIL BÁO ĐỘNG
-        if: failure()
+      - name: 7. 🚨 GỬI EMAIL BÁO ĐỘNG
+        if: failure() # Chỉ gửi khi các bước trên bị lỗi đỏ
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
@@ -46,15 +72,12 @@ jobs:
           secure: true
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "🚨 [CẢNH BÁO DEVSECOPS] Phát hiện lỗ hổng bảo mật!"
+          subject: "🚨 [CẢNH BÁO DEVSECOPS] Hệ thống bị lỗi bảo mật!"
           to: ${{ secrets.MAIL_TO }}
-          from: "Hệ thống CI/CD Security Bot"
+          from: "DevSecOps CI/CD Bot"
           body: |
-            Xin chào Đội ngũ Phát triển,
+            Cảnh báo từ hệ thống tự động!
             
-            Hệ thống CI/CD vừa tự động chạy quy trình kiểm duyệt (Trivy & OWASP ZAP) và đã PHÁT HIỆN LỖ HỔNG.
+            Quy trình triển khai đã bị chặn lại do Trivy phát hiện lỗ hổng nghiêm trọng (CVE) HOẶC OWASP ZAP phát hiện cấu hình sai lệch.
             
-            - Trạng thái: QUY TRÌNH DEPLOY ĐÃ BỊ CHẶN LẠI.
-            - Hành động: Vui lòng đăng nhập vào GitHub, mở tab "Actions" để xem chi tiết.
-            
-            Trân trọng.
+            Vui lòng đăng nhập vào GitHub, tải file Artifact báo cáo chi tiết về máy và khắc phục ngay lập tức.
