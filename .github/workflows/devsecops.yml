@@ -1,63 +1,90 @@
-name: 🛡️ DevSecOps Pipeline (Trivy - ZAP - SARIF)
+name: Advanced DevSecOps Pipeline
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+  workflow_dispatch:
 
 jobs:
-  build-and-scan:
-    name: 🏗️ Build and Security Scan
+  security-guard:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write # Quyền để đẩy kết quả vào tab Security
+      security-events: write # BẮT BUỘC để dùng tính năng Code Scanning của GitHub
       actions: read
 
     steps:
-    - name: 📥 Checkout source code
-      uses: actions/checkout@v4 # Nâng cấp lên v4
+      - name: 1. Checkout code
+        uses: actions/checkout@v4
 
-    # KỊCH BẢN 1: QUÉT TĨNH (SCA) VỚI TRIVY
-    - name: 🐳 1. Quét Lỗ hổng Docker Image (Trivy)
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: "bkimminich/juice-shop:latest"
-        format: "sarif"
-        output: "trivy-results.sarif"
-        vuln-type: "os,library"
-        severity: "CRITICAL,HIGH"
-        exit-code: "1"
+      - name: 2. 🔴 Rà quét Bí mật bị lộ (Secret Scanning)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "table"
+          exit-code: "1"
+          scanners: "secret"
+          severity: "CRITICAL,HIGH"
 
-    # ĐẨY KẾT QUẢ TRIVY LÊN GIAO DIỆN GITHUB
-    - name: 🚀 2. Upload kết quả Trivy lên GitHub Security tab
-      uses: github/codeql-action/upload-sarif@v3 # Nâng cấp lên v3
-      if: always()
-      with:
-        sarif_file: "trivy-results.sarif"
+      - name: 3. 🐳 Quét Lỗ hổng Docker Image (Trivy)
+        if: always() # Chạy để lấy báo cáo kể cả khi bước 2 fail
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "bkimminich/juice-shop:latest"
+          format: "sarif" # <--- ĐÃ SỬA: Đổi từ json sang sarif
+          output: "trivy-results.sarif" # <--- ĐÃ SỬA: Tên file kết quả
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
 
-    # CHUẨN BỊ MÔI TRƯỜNG CHO QUÉT ĐỘNG (DAST)
-    - name: 🏗️ 3. Khởi động Juice Shop (Docker)
-      if: always()
-      run: |
-        docker run --rm -d -p 3000:3000 bkimminich/juice-shop
-        echo "Chờ server khởi động trong 20s..."
-        sleep 20
+      - name: 🚀 3.1. Upload kết quả lên GitHub Security Tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
 
-    # KỊCH BẢN 2 & 3: QUÉT ĐỘNG (DAST) VỚI OWASP ZAP
-    - name: ⚡ 4. Quét bảo mật động (OWASP ZAP Baseline Scan)
-      uses: zaproxy/action-baseline@v0.12.0 # Bản này vẫn ổn định
-      if: always()
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        target: 'http://localhost:3000'
-        cmd_options: '-a'
+      - name: 4. 🚀 Khởi động Ứng dụng Mục tiêu
+        if: always()
+        run: |
+          docker run --rm -d -p 3000:3000 --name juice-shop bkimminich/juice-shop:latest
+          echo "Waiting for app to start..."
+          sleep 30
 
-    # LƯU BÁO CÁO ZAP (ARTIFACT V4)
-    - name: 📊 5. Lưu báo cáo ZAP (Artifact)
-      uses: actions/upload-artifact@v4 # Nâng cấp lên v4 - KHẮC PHỤC LỖI CỦA BẠN
-      if: always()
-      with:
-        name: zap-scan-report
-        path: zap_report.html
+      - name: 5. ⚡ Quét Giao diện & API (OWASP ZAP)
+        if: always()
+        run: |
+          chmod 777 $(pwd)
+          docker run --network host -v $(pwd):/zap/wrk/:rw -t zaproxy/zap-stable zap-baseline.py \
+          -t http://localhost:3000 \
+          -r zap-report.html \
+          -x zap-report.xml
+
+      - name: 6. 📁 Lưu trữ File Báo cáo (Artifacts)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevSecOps-Reports
+          path: |
+            trivy-results.sarif
+            zap-report.html
+            zap-report.xml
+
+      - name: 7. 🚨 GỬI EMAIL BÁO ĐỘNG
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "🚨 [CẢNH BÁO DEVSECOPS] Hệ thống bị lỗi bảo mật!"
+          to: ${{ secrets.MAIL_TO }}
+          from: "DevSecOps CI/CD Bot"
+          body: |
+            Cảnh báo từ hệ thống tự động!
+            
+            Quy trình triển khai đã bị chặn lại do Trivy phát hiện lỗ hổng nghiêm trọng (CVE) HOẶC OWASP ZAP phát hiện cấu hình sai lệch.
+            
+            Vui lòng đăng nhập vào GitHub, kiểm tra tab Security hoặc tải file Artifact báo cáo chi tiết về máy.
