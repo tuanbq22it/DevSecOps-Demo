@@ -28,8 +28,8 @@ jobs:
         uses: aquasecurity/trivy-action@master # <--- ĐÃ SỬA THÀNH @master
         with:
           image-ref: "bkimminich/juice-shop:latest"
-          format: "json"
-          output: "trivy-report.json"
+          format: "sarif" # <--- ĐỔI TỪ json THÀNH sarif
+          output: "trivy-results.sarif"
           vuln-type: "os,library"
           severity: "CRITICAL,HIGH"
           exit-code: "1"
